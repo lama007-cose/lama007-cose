@@ -1,0 +1,158 @@
+- 👋 Hi, I’m @lama007-cose
+- 👀 I’m interested private static string ArkoseKey = "CCB0863E-D45D-42E9-A6C8-9E8544E8B17E";
+private static string BeRealClientSecret = "F5A71DA-32C7-425C-A3E3-375B4DACA406";
+
+private long UnixTimeStamp() {
+    return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+}
+
+static string GenerateRandomDouble(int decimalPlaces) {
+    if (decimalPlaces < 1) {
+        throw new ArgumentOutOfRangeException(nameof(decimalPlaces), "Decimal places must be between 1 and 17.");
+    }
+    Random random = new Random();
+    StringBuilder sb = new StringBuilder("0.");
+    for (int i = 0; i < decimalPlaces; i++) {
+        int digit = random.Next(10);
+        sb.Append(digit);
+    }
+    return sb.ToString();
+}
+
+public async Task<string> GetArkoseToken() {
+    // get public key //
+    var publicKeyPayload = new Dictionary<string, string> {
+        { "bda", (the bda key, don't know if I can share it bcz I don't know myself what it contains) },
+        { "public_key", ArkoseKey },
+        { "site", "file://" },
+        { "userbrowser", "Mozilla/5.0 (Linux; ... Build/UP1A.231105.003; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/129.0.6668.100 Mobile Safari/537.36" },
+        { "capi_version", "2.11.0" },
+        { "capi_mode", "inline" },
+        { "style_theme", "default" },
+        { "rnd", GenerateRandomDouble(17) },
+        { "data[blob]", "" }
+    };
+    var publicKeyContent = new FormUrlEncodedContent(publicKeyPayload);
+    var publicKeyRequest = new HttpRequestMessage(HttpMethod.Post, "https://client-api.arkoselabs.com/fc/gt2/public_key/" + ArkoseKey);
+    publicKeyRequest.Content = publicKeyContent;
+
+    var publicKeyResponse = await _httpClient.SendAsync(publicKeyRequest);
+    if (!publicKeyResponse.IsSuccessStatusCode) {
+        throw new Exception("Internal server error while getting public key response");
+    }
+
+    var publicKeyResponseContent = JsonConvert.DeserializeObject<dynamic>(await publicKeyResponse.Content.ReadAsStringAsync());
+    string unformattedToken = publicKeyResponseContent!.token;
+    string token = unformattedToken.Substring(0, 28);
+
+    // callback to confirm token //
+    var callbackName = "__jsonp_" + UnixTimeStamp();
+    Debug.WriteLine("callback: " + callbackName);
+
+    var baseUri = new Uri("https://client-api.arkoselabs.com/fc/a/");
+    var queryParameters = HttpUtility.ParseQueryString(string.Empty);
+    queryParameters["callback"] = callbackName;
+    queryParameters["category"] = "loaded";
+    queryParameters["action"] = "game loaded";
+    queryParameters["session_token"] = token;
+    queryParameters["data[public_key]"] = ArkoseKey;
+    queryParameters["data[site]"] = "file://";
+
+    var uriBuilder = new UriBuilder(baseUri)
+    {
+        Query = queryParameters.ToString()
+    };
+
+    var callbackRequest = new HttpRequestMessage(HttpMethod.Get, uriBuilder.ToString());
+    var callbackResponse = await _httpClient.SendAsync(callbackRequest);
+    if (!callbackResponse.IsSuccessStatusCode) {
+        throw new Exception("Error while sending callback request");
+    }
+
+    return token;
+}
+
+public async Task BeRealSendOtp(string phoneNumber, bool useL7 = true) {
+    string arkoseToken = await GetArkoseToken();
+
+    var payload = new {
+        client_id = "android",
+        client_secret = BeRealClientSecret,
+        device_id = "2312889cb6b5f15f",
+        phone_number = phoneNumber,
+        tokens = new[] {
+            new {
+                token = arkoseToken,
+                identifier = "AR" // identifier type for arkose tokens only
+            }
+        }
+    };
+
+    var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+    var request = new HttpRequestMessage(HttpMethod.Post, "https://auth" + (useL7 ? "-l7" : "") + ".bereal.com/token/phone");
+
+    request.Content = content;
+    request.Headers.Add("User-Agent", "BeReal/3.10.1 (com.bereal.ft; build:2348592; Android 14) 4.12.0/OkHttp");
+    request.Headers.Add("bereal-app-version-code", "14549");
+    request.Headers.Add("bereal-signature", await FetchSignatureAsync());
+    request.Headers.Add("bereal-platform", "android");
+    request.Headers.Add("bereal-os-version", "14");
+    request.Headers.Add("bereal-device-id", "2312889cb6b5f15f");
+    request.Headers.Add("bereal-app-version-code", "2348592");
+    request.Headers.Add("bereal-app-version", "3.10.1");
+    request.Headers.Add("Accept-Encoding", "gzip");
+    request.Headers.Add("bereal-timezone", "Europe/Paris");
+
+    var response = await _httpClient.SendAsync(request);
+    if (!response.IsSuccessStatusCode) {
+        throw new Exception("Internal server error while sending otp: " + response.StatusCode);
+    }
+}
+
+public async Task BeRealCheckOtp(string accountName, string phoneNumber, string otp, bool useL7 = true) {
+    var payload = new {
+        client_id = "android",
+        client_secret = BeRealClientSecret,
+        code = otp,
+        device_id = "2312889cb6b5f15f",
+        phone_number = phoneNumber
+    };
+
+    var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+    var request = new HttpRequestMessage(HttpMethod.Post, "https://auth" + (useL7 ? "-l7" : "") + ".bereal.com/token/phone");
+
+    request.Content = content;
+    request.Headers.Add("User-Agent", "BeReal/3.10.1 (com.bereal.ft; build:2348592; Android 14) 4.12.0/OkHttp");
+    request.Headers.Add("bereal-app-version-code", "14549");
+    request.Headers.Add("bereal-signature", await FetchSignatureAsync());
+    request.Headers.Add("bereal-platform", "android");
+    request.Headers.Add("bereal-os-version", "14");
+    request.Headers.Add("bereal-device-id", "2312889cb6b5f15f");
+    request.Headers.Add("bereal-app-version-code", "2348592");
+    request.Headers.Add("bereal-app-version", "3.10.1");
+    request.Headers.Add("Accept-Encoding", "gzip");
+    request.Headers.Add("bereal-timezone", "Europe/Paris");
+
+    var response = await _httpClient.SendAsync(request);
+    if (!response.IsSuccessStatusCode) {
+        throw new Exception("Internal server error while sending otp: " + response.StatusCode);
+    }
+    var responseContent = JsonConvert.DeserializeObject<dynamic>(await response.Content.ReadAsStringAsync());
+
+    string berealAccessToken = responseContent!.access_token;
+    string refreshToken = responseContent!.refresh_token;
+    long expiresIn = responseContent!.expires_in;
+    long expires = GetCurrentDate() + expiresIn;
+
+    // ....
+}
+- 🌱 I’m currently learning ...
+- 💞️ I’m looking to collaborate on ...
+- 📫 How to reach me ...
+- 😄 Pronouns: ...
+- ⚡ Fun fact: ...
+
+<!---
+lama007-cose/lama007-cose is a ✨ special ✨ repository because its `README.md` (this file) appears on your GitHub profile.
+You can click the Preview link to take a look at your changes.
+--->
